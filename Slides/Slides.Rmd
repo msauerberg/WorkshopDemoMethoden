@@ -1,0 +1,224 @@
+---
+title: Demografische Methoden für die Analyse von regionalen Unterschieden in der
+  Sterblichkeit mit Beispielen für R
+author: "Markus Sauerberg und Pavel Grigoriev"
+date: "28.11.2023"
+output:
+  ioslides_presentation:
+    widescreen: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Einleitung
+
+<div class="columns-2">
+  ![](REDIM_GruppenFoto.jpg){width=350px}
+  
+  *REDIM Team am BiB*
+
+  - Regionale Disparitäten in der todesursachenspezifischen Mortalität (REDIM) mit Pavel Grigoriev      als PI
+  - Sterblichkeitsentwicklung in Deutschland, z.B. Lebenserwartung nach Bundesländern oder in den 96     Raumordnungsregionen
+  - R User Gruppe am BiB (zusammen mit Laura Cilek)
+</div>
+
+
+## Beispiel: Lebenserwartung in Europa im Jahr 2019
+
+<div class="columns-2">
+  ![](Map_Beispiel.png){width=400px}
+
+  - Aufbereitung des Datensatzes (Sterbefälle und Bevölkerungszahlen)
+  - Berechnung der Lebenserwartung für 531 Regionen nach Geschlecht in mehreren Jahren
+  - Karten erstellen mit ggplot2
+</div>
+
+## Hat sich die Sterblichkeit während der Pandemie verändert?
+
+  - Fokus auf Bundesländer und Gesamtsterblichkeit
+  - Wie Veränderungen in der Sterblichkeit messen (Methodenteil)?
+  - Umsetzung in R
+  - Funktion auf die Kombinationen aus Region, Jahr, und Geschlecht anwenden
+  - Grafiken und Karten erstellen
+  - Konfidenzintervalle für Mortalitätsindikatoren
+  - Dekomposition einer Differenz in der Lebenserwartung in Altersbeiträge
+  - Daten und Code befindet sich auf [https://github.com/msauerberg](https://github.com/msauerberg)
+
+## Altersstandardisierte Sterberate
+
+  - Absolute Anzahl an Sterbefällen ist abhängig von der Bevölkerungsgröße und Altersstruktur
+  - Rohe Sterberate ($CDR$) ergibt sich aus den Sterbefällen $D$ geteilt durch die Bevölkerung $N$ und ist ebenfalls abhängig von der Altersstruktur $C_x$ (siehe Kitagawa 1964; Preston et al. 2001)
+  
+  $$CDR = \frac{D}{N}=\sum_{x=0}^{\infty} m_x\cdot C_x$$
+  
+ - Um auf den Effekt der Altersstruktur zu kontrollieren, verwenden wir die altersstandardisierte Sterberate
+ 
+ $$SDR=\sum_{x=0}^{\infty} m_x\cdot C_x^{Standard}$$
+
+## Beispiel in R
+
+```{r, echo=TRUE}
+Daten <- read.table("SDR_Beispiel.txt")
+head(Daten)
+```
+
+## Beispiel in R
+```{r, echo=TRUE}
+
+# Summe der Todesfälle
+sum(Daten$Dx_Deutschland)
+sum(Daten$Dx_Schweiz)
+```
+## Beispiel in R
+
+```{r, echo=TRUE}
+
+#CDR
+CDR_DE <- sum(Daten$Dx_Deutschland) / sum(Daten$Nx_Deutschland)
+CDR_CH <- sum(Daten$Dx_Schweiz) / sum(Daten$Nx_Schweiz)
+
+round(CDR_DE, 4)
+round(CDR_CH, 4)
+Ratio_CDR <- CDR_DE/CDR_CH
+round(Ratio_CDR, 2)
+```
+
+## Beispiel in R
+
+```{r, echo=TRUE, fig.width=3.5, fig.height=3.5}
+
+# Altersstruktur
+C_DE <- Daten$Nx_Deutschland / sum(Daten$Nx_Deutschland)
+C_CH <- Daten$Nx_Schweiz / sum(Daten$Nx_Schweiz)
+plot(1:21, C_DE, type="l", col="gold", ylab="Bevölkerungsanteil",
+     xlab="Altersgruppe")
+lines(1:21, C_CH, col="red")
+legend("topleft", legend=c("DE", "CH"), fill=c("gold", "red"), bty="n")
+```
+
+
+## Beispiel in R
+
+```{r, echo=TRUE}
+
+# CDR = Summe über mx * Cx
+mx_DE <- Daten$Dx_Deutschland / Daten$Nx_Deutschland
+mx_CH <- Daten$Dx_Schweiz / Daten$Nx_Schweiz
+
+# Deutschland
+sum(mx_DE * C_DE)
+CDR_DE
+```
+
+## Beispiel in R
+
+```{r, echo=TRUE}
+
+# SDR mit Standardbev. 2013
+SDR_DE <- sum(mx_DE * Daten$Europa_Standard_2013)
+SDR_CH <- sum(mx_CH * Daten$Europa_Standard_2013)
+
+round(SDR_DE, 4)
+round(SDR_CH, 4)
+Ratio_SDR <- SDR_DE/SDR_CH
+round(Ratio_SDR, 2)
+```
+
+## Sterbetafel und Lebenserwartung bei Geburt
+
+  - Idee: Wir nehmen die beobachteten altersspezifischen Sterberaten aus einer Bevölkerung und berechnen mithilfe einer Sterbetafel, wie lange eine hypothetische Bevölkerung darauf basierend im Durchschnitt leben würde
+  - Vorteil 1: Wir benötigen keine Standardbevölkerung, aber die Maßzahl ist trotzdem unabhängig von der Altersstruktur der ursprünglichen Bevölkerung
+  - Vorteil 2: Die Maßzahl ist leicht zu interpretieren (Einheit ist Lebensjahre)
+  
+  $$e_0 = \int_0^{\infty}l(x)dx,$$
+  wobei $l(x)$ die Überlebenskurve darstellt, die sich aus den altersspezifischen Sterberaten ergibt.
+  
+## Beispiel in R
+```{r, echo=TRUE}
+# Funktion für eine Sterbetafel
+Sterbetafel <- function(mx){
+  x <- c(0, 1, seq(5,95,5))
+  m <- length(mx)
+  n <- c(diff(x), NA)
+  ax <- n/2; ax[1] <- 0.14; ax[m] <- 1 / mx[m]
+  qx  <- n*mx / (1 + (n - ax) * mx)
+  qx[m] <- 1
+  px  <- 1-qx
+  lx  <- cumprod(c(1,px))*100000
+  dx  <- -diff(lx)
+  Lx  <- n*lx[-1] + ax*dx
+  lx <- lx[-(m+1)]
+  Lx[m] <- lx[m]/mx[m]
+  Tx  <- rev(cumsum(rev(Lx)))
+  ex  <- Tx/lx
+  return.df <- data.frame(x, n, mx, ax, qx, px, lx, dx, Lx, Tx, ex)
+  return(return.df)
+}
+```
+
+
+## Beispiel in R
+```{r, echo=TRUE}
+Sterbetafel_DE <- Sterbetafel(mx = mx_DE)
+Sterbetafel_CH <- Sterbetafel(mx = mx_CH)
+head(Sterbetafel_DE)
+```
+
+## Beispiel in R
+```{r, echo=TRUE, fig.width=3.5, fig.height=3.5}
+# Lebenserwartung bei Geburt 2019, Deutschland vs. Schweiz
+round(Sterbetafel_DE$ex[1], 2)
+round(Sterbetafel_CH$ex[1], 2)
+Ratio_e0 <- round(Sterbetafel_CH$ex[1], 2) / round(Sterbetafel_DE$ex[1], 2)
+round(Ratio_e0, 2)
+```
+
+## Beispiel in R
+```{r, echo=TRUE, fig.width=3.5, fig.height=3.5}
+# Vergleich der Überlebenskurven für Deutschland und Schweiz, 2019
+plot(1:21, Sterbetafel_DE$lx, type="l", col="gold", xlab="Altersgruppe",
+     ylab="Überlebende in der Sterbetafel")
+lines(1:21, Sterbetafel_CH$lx, col="red")
+```
+
+## Beispiel in R
+```{r, echo=TRUE}
+# CDR und SDR in der Sterbetafel
+CDR_Sterbetafel <- sum(Sterbetafel_DE$dx) / sum(Sterbetafel_DE$Lx)
+C_Sterbetafel <- Sterbetafel_DE$Lx / sum(Sterbetafel_DE$Lx)
+sum(mx_DE * C_Sterbetafel)
+CDR_Sterbetafel
+```
+
+
+## Beispiel in R
+```{r, echo=TRUE}
+# Lebenserwartung entspricht 1/CDR
+Sterbetafel_DE$ex[1]
+1/CDR_Sterbetafel
+```
+
+## Zusammenfassung
+  - Die Mortalitätsanalyse sollte nicht nur auf dem Vergleich der absoluten Anzahl an Sterbefällen basieren (Veränderung der Bevölkerungsgröße und Altersstruktur können die Messung verzerren)  
+  - Indikatoren wie die $SDR$ oder $e_0$ sind altersstandardisiert und eigenen sich für die Mortalitätsanalyse
+  - Sie benötigen jedoch eine "Standardbevölkerung", diese muss bei der $SDR$ explizit ausgewählt werden (z.B. die Europäische Standardbevölkerung 2013), während sie bei $e_0$ aus der Sterbetafel-Bevölkerung kommt
+  - Es ist wichtig zu wissen, dass die Wahl der Standardbevölkerung einen Effekt auf die Ergebnisse haben kann
+  - Deswegen: Mehrere Varianten testen und überprüfen, ob die Ergebnisse robust sind
+  
+## Literatur
+  - Andreev, E. (2021). Is life expectancy at birth really the best measure of mortality in a           population? *Demographic Review* 8(2):6-26.
+  - Goldstein, J.R. und Lee, R.D. (2020). Demographic perspectives on the mortality of COVID-19 and     other epidemics. *PNAS* 117(36):22035-22041.
+  - Keyfitz, N. (1985). Mortality Comparisons; The Male-Female Ratio. In: *Applied Mathematical          Demography*, pp. 54-76. Springer Texts in Statistics.
+  - Kitagawa, E.M. (1964). Standardized comparisons in population research. *Demography*                1(1):296-315.
+  - Luy, M., Di Giulio, P., Di Lego, V., Lazarevič, P., und Sauerberg, M. (2020). Life Expectancy:      Frequently Used, but Hardly Understood. *Gerontology* 66(1):95-104.
+  - Modig, K., Rau, R., und Ahlbom, A. (2020). Life expectancy: what does it measure? *BMJ Open*        10(7):e035932.
+
+## Literatur
+ 
+  - Preston, S.H., Heuveline, P., und Guillot, M. (2001). Demography: Measuring and modeling            population processes. Oxford, United Kingdom: Blackwell Publishers Ltd.
+  - Schoen, R. (1976). Measuring mortality trends and differentials. *Social Biology* 23(3):235-243.
+ 
+  
+ 
